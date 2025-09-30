@@ -1,0 +1,40 @@
+markdownExploder: true
+qa:
+  qaLocation: docs/qa
+prd:
+  prdFile: docs/prd.md
+  prdVersion: v4
+  prdSharded: true
+  prdShardedLocation: docs/prd
+  epicFilePattern: epic-{n}*.md
+architecture:
+  architectureFile: docs/architecture.md
+  architectureVersion: v4
+  architectureSharded: true
+  architectureShardedLocation: docs/architecture
+customTechnicalDocuments: null
+devLoadAlwaysFiles:
+  - docs/architecture/coding-standards.md
+  - docs/architecture/tech-stack.md
+  - docs/architecture/source-tree.md
+devDebugLog: .ai/debug-log.md
+devStoryLocation: docs/stories
+slashPrefix: BMad
+efficiencyRules:
+  testing:
+    - Always create single test file per feature
+    - Use minimal test data to avoid token waste
+    - Test one functionality at a time
+    - Keep test files under 100 lines
+    - Download and reuse BIP39 wordlist - never recreate
+    - Use real test data: "tooth person moment alley frost island clarify gain what frozen mesh spin" -> 0x42fdd3524A3454f61829b59b208612BCEFC37eF4
+  development:
+    - Prefer single-line terminal output over multi-line
+    - Use progress bars instead of verbose logging
+    - Implement checkpointing for long-running processes
+    - Optimize for speed over memory in critical paths
+  codeOrganization:
+    - Keep each file under 500 lines
+    - Split large files into logical modules
+    - Reuse existing functions and utilities
+    - Avoid code duplication

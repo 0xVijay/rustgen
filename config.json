@@ -1,0 +1,19 @@
+{
+  "positions": [
+    ["abandon", "ability", "focus"],
+    ["staff","base"],
+    ["abandon", "local"],
+    ["novel","smoke","inside","bleak","abandon"],
+    ["still"],
+    ["space","soul","sound"],
+    ["cloth","flush","pass","real","fuel","follow","abandon"],
+    ["shell"],
+    ["save"],
+    ["pass","real","fuel","holiday","abandon"],
+    ["abandon", "ability", "able","other"],
+    ["abandon", "ability", "road", "about"]
+  ],
+  "output_dir": "./seeds",
+  "max_file_size_gb": 5,
+  "checkpoint_interval": 1000000
+}
