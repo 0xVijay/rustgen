@@ -3,13 +3,7 @@ name = "seed-recovery"
 version = "1.0.0"
 edition = "2021"
 
-[[bin]]
-name = "generator"
-path = "src/generator.rs"
-
-[[bin]]
-name = "finder_cpu"
-path = "src/finder_cpu.rs"
+# Single binary handles both generation and finding
 
 
 [dependencies]

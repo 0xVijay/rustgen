@@ -22,6 +22,19 @@ A high-performance tool for recovering lost cryptocurrency wallet seeds when you
 
 ## Usage
 
+### Quick Start
+
+```bash
+# Show help
+./target/release/seed-recovery --help
+
+# Generate seeds
+./target/release/seed-recovery generate config.json
+
+# Find seeds
+./target/release/seed-recovery find finder_config.json
+```
+
 ### 1. Generate Seeds
 
 Create a configuration file with your word constraints:
@@ -50,7 +63,11 @@ Create a configuration file with your word constraints:
 
 Run the generator:
 ```bash
-cargo run --bin generator config.json
+# Generate seed combinations
+cargo run --release generate config.json
+
+# Or run the binary directly
+./target/release/seed-recovery generate config.json
 ```
 
 ### 2. Find Seeds
@@ -67,11 +84,11 @@ Create a finder configuration:
 
 Run the finder:
 ```bash
-# Recommended: Release mode (fastest, may complete before progress shows)
-cargo run --release --bin finder_cpu finder_config.json
+# Find seed that matches target address
+cargo run --release find finder_config.json
 
-# Development mode (shows progress, slower)
-cargo run --bin finder_cpu finder_config.json
+# Or run the binary directly
+./target/release/seed-recovery find finder_config.json
 ```
 
 ## Configuration

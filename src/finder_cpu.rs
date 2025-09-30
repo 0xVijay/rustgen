@@ -11,14 +11,7 @@ struct FinderConfig {
     seeds_dir: String,
 }
 
-fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <finder_config.json>", args[0]);
-        std::process::exit(1);
-    }
-
-    let config_path = &args[1];
+pub fn run_finder(config_path: &str) -> Result<()> {
     let config: FinderConfig = serde_json::from_str(&fs::read_to_string(config_path)?)?;
     
     // Load BIP39 wordlist
@@ -213,11 +206,9 @@ fn scan_seeds(
         
         // Process ALL seeds at once for maximum speed with progress tracking
         let total_seeds = mmap.len() / 17;
-        let _processed = 0;
         
         // Adaptive memory management based on system capabilities
-        let available_memory = get_available_memory();
-        let memory_efficient = available_memory < 8 * 1024 * 1024 * 1024; // Less than 8GB
+        let _available_memory = get_available_memory();
         
         // Use atomic counter for thread-safe progress tracking
         use std::sync::atomic::{AtomicUsize, Ordering};
@@ -250,7 +241,7 @@ fn scan_seeds(
                         pb.tick();
                     }
                     
-                    match derive_ethereum_address_maximum_speed(seed_bytes) {
+                    match derive_ethereum_address_optimized_bip32(seed_bytes) {
                         Ok(address) => {
                             if address.to_lowercase() == target_address {
                                 Some(decode_to_mnemonic(seed_bytes, wordlist))
@@ -282,312 +273,15 @@ fn scan_seeds(
     Ok(None)
 }
 
-
-// Ultra-fast derivation using pre-computed constants and optimized crypto
-fn derive_ethereum_address_direct(seed_bytes: &[u8]) -> Result<String> {
+// OPTIMIZED BIP32 with lookup tables for m/44'/60'/0'/0/2
+fn derive_ethereum_address_optimized_bip32(seed_bytes: &[u8]) -> Result<String> {
     use bip39::{Mnemonic, Language};
     use tiny_keccak::{Hasher, Keccak};
     use bitcoin::bip32::{ExtendedPrivKey, DerivationPath};
     use bitcoin::secp256k1::{Secp256k1, PublicKey};
     use std::str::FromStr;
     
-    // Decode mnemonic indices directly (no string allocation)
-    let mut indices = [0usize; 12];
-    let mut bit_pos = 0;
-    
-    for i in 0..12 {
-        let mut word_idx = 0u16;
-        for bit in 0..11 {
-            let byte_pos = bit_pos / 8;
-            let bit_offset = 7 - (bit_pos % 8);
-            if (seed_bytes[byte_pos] >> bit_offset) & 1 == 1 {
-                word_idx |= 1 << (10 - bit);
-            }
-            bit_pos += 1;
-        }
-        indices[i] = word_idx as usize;
-    }
-    
-    // Convert to mnemonic with minimal allocations
-    let wordlist = load_bip39_wordlist()?;
-    let mut mnemonic_phrase = String::with_capacity(200);
-    for (i, &idx) in indices.iter().enumerate() {
-        if i > 0 {
-            mnemonic_phrase.push(' ');
-        }
-        mnemonic_phrase.push_str(&wordlist[idx]);
-    }
-    
-    // Parse mnemonic and get seed
-    let mnemonic = Mnemonic::parse_in(Language::English, &mnemonic_phrase)?;
-    let seed = mnemonic.to_seed("");
-    
-    // Use pre-computed derivation path for m/44'/60'/0'/0/2
-    let derivation_path = DerivationPath::from_str("m/44'/60'/0'/0/2")?;
-    let master_key = ExtendedPrivKey::new_master(bitcoin::Network::Bitcoin, &seed)?;
-    
-    // Reuse Secp256k1 context for better performance
-    static SECP: std::sync::OnceLock<Secp256k1<bitcoin::secp256k1::All>> = std::sync::OnceLock::new();
-    let secp = SECP.get_or_init(|| Secp256k1::new());
-    
-    let derived_key = master_key.derive_priv(secp, &derivation_path)?;
-    let private_key = derived_key.private_key;
-    
-    // Get public key
-    let public_key = PublicKey::from_secret_key(secp, &private_key);
-    let public_key_bytes = public_key.serialize_uncompressed();
-    
-    // Calculate Ethereum address with optimized hashing
-    let mut hasher = Keccak::v256();
-    hasher.update(&public_key_bytes[1..]); // Skip the 0x04 prefix
-    let mut hash = [0u8; 32];
-    hasher.finalize(&mut hash);
-    
-    // Format address without additional allocations
-    let address = format!("0x{}", hex::encode(&hash[12..]));
-    Ok(address)
-}
-
-// ULTRA-FAST derivation optimized for maximum CPU usage
-fn derive_ethereum_address_ultra_fast(seed_bytes: &[u8]) -> Result<String> {
-    use bip39::{Mnemonic, Language};
-    use tiny_keccak::{Hasher, Keccak};
-    use bitcoin::bip32::{ExtendedPrivKey, DerivationPath};
-    use bitcoin::secp256k1::{Secp256k1, PublicKey};
-    use std::str::FromStr;
-    
-    // Decode mnemonic indices with optimized bit operations
-    let mut indices = [0usize; 12];
-    let mut bit_pos = 0;
-    
-    // Unrolled loop for better performance
-    for i in 0..12 {
-        let mut word_idx = 0u16;
-        // Unroll the inner loop for maximum speed
-        let byte_pos_0 = bit_pos / 8;
-        let bit_offset_0 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_0] >> bit_offset_0) & 1 == 1 { word_idx |= 1 << 10; }
-        bit_pos += 1;
-        
-        let byte_pos_1 = bit_pos / 8;
-        let bit_offset_1 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_1] >> bit_offset_1) & 1 == 1 { word_idx |= 1 << 9; }
-        bit_pos += 1;
-        
-        let byte_pos_2 = bit_pos / 8;
-        let bit_offset_2 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_2] >> bit_offset_2) & 1 == 1 { word_idx |= 1 << 8; }
-        bit_pos += 1;
-        
-        let byte_pos_3 = bit_pos / 8;
-        let bit_offset_3 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_3] >> bit_offset_3) & 1 == 1 { word_idx |= 1 << 7; }
-        bit_pos += 1;
-        
-        let byte_pos_4 = bit_pos / 8;
-        let bit_offset_4 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_4] >> bit_offset_4) & 1 == 1 { word_idx |= 1 << 6; }
-        bit_pos += 1;
-        
-        let byte_pos_5 = bit_pos / 8;
-        let bit_offset_5 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_5] >> bit_offset_5) & 1 == 1 { word_idx |= 1 << 5; }
-        bit_pos += 1;
-        
-        let byte_pos_6 = bit_pos / 8;
-        let bit_offset_6 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_6] >> bit_offset_6) & 1 == 1 { word_idx |= 1 << 4; }
-        bit_pos += 1;
-        
-        let byte_pos_7 = bit_pos / 8;
-        let bit_offset_7 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_7] >> bit_offset_7) & 1 == 1 { word_idx |= 1 << 3; }
-        bit_pos += 1;
-        
-        let byte_pos_8 = bit_pos / 8;
-        let bit_offset_8 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_8] >> bit_offset_8) & 1 == 1 { word_idx |= 1 << 2; }
-        bit_pos += 1;
-        
-        let byte_pos_9 = bit_pos / 8;
-        let bit_offset_9 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_9] >> bit_offset_9) & 1 == 1 { word_idx |= 1 << 1; }
-        bit_pos += 1;
-        
-        let byte_pos_10 = bit_pos / 8;
-        let bit_offset_10 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_10] >> bit_offset_10) & 1 == 1 { word_idx |= 1 << 0; }
-        bit_pos += 1;
-        
-        indices[i] = word_idx as usize;
-    }
-    
-    // Convert to mnemonic with minimal allocations
-    let wordlist = load_bip39_wordlist()?;
-    let mut mnemonic_phrase = String::with_capacity(200);
-    for (i, &idx) in indices.iter().enumerate() {
-        if i > 0 {
-            mnemonic_phrase.push(' ');
-        }
-        mnemonic_phrase.push_str(&wordlist[idx]);
-    }
-    
-    // Parse mnemonic and get seed
-    let mnemonic = Mnemonic::parse_in(Language::English, &mnemonic_phrase)?;
-    let seed = mnemonic.to_seed("");
-    
-    // Use pre-computed derivation path for m/44'/60'/0'/0/2
-    let derivation_path = DerivationPath::from_str("m/44'/60'/0'/0/2")?;
-    let master_key = ExtendedPrivKey::new_master(bitcoin::Network::Bitcoin, &seed)?;
-    
-    // Reuse Secp256k1 context for better performance
-    static SECP: std::sync::OnceLock<Secp256k1<bitcoin::secp256k1::All>> = std::sync::OnceLock::new();
-    let secp = SECP.get_or_init(|| Secp256k1::new());
-    
-    let derived_key = master_key.derive_priv(secp, &derivation_path)?;
-    let private_key = derived_key.private_key;
-    
-    // Get public key
-    let public_key = PublicKey::from_secret_key(secp, &private_key);
-    let public_key_bytes = public_key.serialize_uncompressed();
-    
-    // Calculate Ethereum address with optimized hashing
-    let mut hasher = Keccak::v256();
-    hasher.update(&public_key_bytes[1..]); // Skip the 0x04 prefix
-    let mut hash = [0u8; 32];
-    hasher.finalize(&mut hash);
-    
-    // Format address without additional allocations
-    let address = format!("0x{}", hex::encode(&hash[12..]));
-    Ok(address)
-}
-
-// EXTREME-FAST derivation with pre-computed wordlist and minimal allocations
-fn derive_ethereum_address_extreme_fast(seed_bytes: &[u8]) -> Result<String> {
-    use bip39::{Mnemonic, Language};
-    use tiny_keccak::{Hasher, Keccak};
-    use bitcoin::bip32::{ExtendedPrivKey, DerivationPath};
-    use bitcoin::secp256k1::{Secp256k1, PublicKey};
-    use std::str::FromStr;
-    
-    // Pre-compute wordlist once
-    static WORDLIST: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
-    let wordlist = WORDLIST.get_or_init(|| load_bip39_wordlist().unwrap());
-    
-    // Decode mnemonic indices with optimized bit operations
-    let mut indices = [0usize; 12];
-    let mut bit_pos = 0;
-    
-    // Unrolled loop for better performance
-    for i in 0..12 {
-        let mut word_idx = 0u16;
-        // Unroll the inner loop for maximum speed
-        let byte_pos_0 = bit_pos / 8;
-        let bit_offset_0 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_0] >> bit_offset_0) & 1 == 1 { word_idx |= 1 << 10; }
-        bit_pos += 1;
-        
-        let byte_pos_1 = bit_pos / 8;
-        let bit_offset_1 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_1] >> bit_offset_1) & 1 == 1 { word_idx |= 1 << 9; }
-        bit_pos += 1;
-        
-        let byte_pos_2 = bit_pos / 8;
-        let bit_offset_2 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_2] >> bit_offset_2) & 1 == 1 { word_idx |= 1 << 8; }
-        bit_pos += 1;
-        
-        let byte_pos_3 = bit_pos / 8;
-        let bit_offset_3 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_3] >> bit_offset_3) & 1 == 1 { word_idx |= 1 << 7; }
-        bit_pos += 1;
-        
-        let byte_pos_4 = bit_pos / 8;
-        let bit_offset_4 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_4] >> bit_offset_4) & 1 == 1 { word_idx |= 1 << 6; }
-        bit_pos += 1;
-        
-        let byte_pos_5 = bit_pos / 8;
-        let bit_offset_5 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_5] >> bit_offset_5) & 1 == 1 { word_idx |= 1 << 5; }
-        bit_pos += 1;
-        
-        let byte_pos_6 = bit_pos / 8;
-        let bit_offset_6 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_6] >> bit_offset_6) & 1 == 1 { word_idx |= 1 << 4; }
-        bit_pos += 1;
-        
-        let byte_pos_7 = bit_pos / 8;
-        let bit_offset_7 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_7] >> bit_offset_7) & 1 == 1 { word_idx |= 1 << 3; }
-        bit_pos += 1;
-        
-        let byte_pos_8 = bit_pos / 8;
-        let bit_offset_8 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_8] >> bit_offset_8) & 1 == 1 { word_idx |= 1 << 2; }
-        bit_pos += 1;
-        
-        let byte_pos_9 = bit_pos / 8;
-        let bit_offset_9 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_9] >> bit_offset_9) & 1 == 1 { word_idx |= 1 << 1; }
-        bit_pos += 1;
-        
-        let byte_pos_10 = bit_pos / 8;
-        let bit_offset_10 = 7 - (bit_pos % 8);
-        if (seed_bytes[byte_pos_10] >> bit_offset_10) & 1 == 1 { word_idx |= 1 << 0; }
-        bit_pos += 1;
-        
-        indices[i] = word_idx as usize;
-    }
-    
-    // Convert to mnemonic with minimal allocations
-    let mut mnemonic_phrase = String::with_capacity(200);
-    for (i, &idx) in indices.iter().enumerate() {
-        if i > 0 {
-            mnemonic_phrase.push(' ');
-        }
-        mnemonic_phrase.push_str(&wordlist[idx]);
-    }
-    
-    // Parse mnemonic and get seed
-    let mnemonic = Mnemonic::parse_in(Language::English, &mnemonic_phrase)?;
-    let seed = mnemonic.to_seed("");
-    
-    // Use pre-computed derivation path for m/44'/60'/0'/0/2
-    let derivation_path = DerivationPath::from_str("m/44'/60'/0'/0/2")?;
-    let master_key = ExtendedPrivKey::new_master(bitcoin::Network::Bitcoin, &seed)?;
-    
-    // Reuse Secp256k1 context for better performance
-    static SECP: std::sync::OnceLock<Secp256k1<bitcoin::secp256k1::All>> = std::sync::OnceLock::new();
-    let secp = SECP.get_or_init(|| Secp256k1::new());
-    
-    let derived_key = master_key.derive_priv(secp, &derivation_path)?;
-    let private_key = derived_key.private_key;
-    
-    // Get public key
-    let public_key = PublicKey::from_secret_key(secp, &private_key);
-    let public_key_bytes = public_key.serialize_uncompressed();
-    
-    // Calculate Ethereum address with optimized hashing
-    let mut hasher = Keccak::v256();
-    hasher.update(&public_key_bytes[1..]); // Skip the 0x04 prefix
-    let mut hash = [0u8; 32];
-    hasher.finalize(&mut hash);
-    
-    // Format address without additional allocations
-    let address = format!("0x{}", hex::encode(&hash[12..]));
-    Ok(address)
-}
-
-// MAXIMUM-SPEED derivation with SIMD-like optimizations and pre-computed constants
-fn derive_ethereum_address_maximum_speed(seed_bytes: &[u8]) -> Result<String> {
-    use bip39::{Mnemonic, Language};
-    use tiny_keccak::{Hasher, Keccak};
-    use bitcoin::bip32::{ExtendedPrivKey, DerivationPath};
-    use bitcoin::secp256k1::{Secp256k1, PublicKey};
-    use std::str::FromStr;
-    
-    // Pre-compute wordlist and derivation path once
+    // Pre-compute everything once
     static WORDLIST: std::sync::OnceLock<Vec<String>> = std::sync::OnceLock::new();
     static DERIVATION_PATH: std::sync::OnceLock<DerivationPath> = std::sync::OnceLock::new();
     static SECP: std::sync::OnceLock<Secp256k1<bitcoin::secp256k1::All>> = std::sync::OnceLock::new();
@@ -712,10 +406,13 @@ fn decode_to_mnemonic(seed_bytes: &[u8], wordlist: &[String]) -> String {
         indices.push(word_idx as usize);
     }
     
-    let words: Vec<String> = indices.iter()
-        .map(|&idx| wordlist[idx].clone())
-        .collect();
+    let mut mnemonic = String::new();
+    for (i, &idx) in indices.iter().enumerate() {
+        if i > 0 {
+            mnemonic.push(' ');
+        }
+        mnemonic.push_str(&wordlist[idx]);
+    }
     
-    words.join(" ")
+    mnemonic
 }
-

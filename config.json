@@ -1,17 +1,17 @@
 {
   "positions": [
     ["abandon", "ability", "focus"],
-    ["staff","base"],
+    ["base"],
     ["abandon", "local"],
     ["novel","smoke","inside","bleak","abandon"],
-    ["staff","clown","abandon","ability","still"],
+    ["staff","clown","still"],
     ["space","soul","sound"],
     ["cloth","flush","pass","real","fuel","follow","abandon"],
-    ["inside","base","bleak","shell"],
-    ["inside","soul","bleak","save"],
+    ["shell"],
+    ["cloth","flush","pass","real","fuel","follow","save"],
     ["pass","real","fuel","holiday","abandon"],
-    ["abandon", "ability", "able","other"],
-    ["abandon", "ability", "road", "about"]
+    ["cloth","flush","pass","real","fuel","follow","other"],
+    ["road", "about"]
   ],
   "output_dir": "./seeds",
   "max_file_size_gb": 5,

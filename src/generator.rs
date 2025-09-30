@@ -19,14 +19,7 @@ struct Checkpoint {
     total_processed: u64,
 }
 
-fn main() -> Result<()> {
-    let args: Vec<String> = std::env::args().collect();
-    if args.len() != 2 {
-        eprintln!("Usage: {} <config.json>", args[0]);
-        std::process::exit(1);
-    }
-
-    let config_path = &args[1];
+pub fn run_generator(config_path: &str) -> Result<()> {
     let config: Config = serde_json::from_str(&fs::read_to_string(config_path)?)?;
     
     // Load BIP39 wordlist
@@ -40,7 +33,7 @@ fn main() -> Result<()> {
     
     // Load or create checkpoint
     let checkpoint_path = format!("{}/checkpoint.json", config.output_dir);
-    let mut checkpoint = load_checkpoint(&checkpoint_path)?;
+    let mut checkpoint = load_checkpoint(&checkpoint_path, &config.positions)?;
     
     // Calculate total combinations
     let total_combinations = calculate_total_combinations(&config.positions);
@@ -93,13 +86,13 @@ fn calculate_total_combinations(positions: &[Vec<String>]) -> u64 {
     positions.iter().map(|pos| pos.len() as u64).product()
 }
 
-fn load_checkpoint(checkpoint_path: &str) -> Result<Checkpoint> {
+fn load_checkpoint(checkpoint_path: &str, positions: &[Vec<String>]) -> Result<Checkpoint> {
     if Path::new(checkpoint_path).exists() {
         let content = fs::read_to_string(checkpoint_path)?;
         Ok(serde_json::from_str(&content)?)
     } else {
         Ok(Checkpoint {
-            current_combination: vec![0; 12],
+            current_combination: vec![0; positions.len()],
             file_count: 0,
             total_processed: 0,
         })
@@ -127,11 +120,11 @@ fn generate_seeds(
     
     // Convert word indices to combination indices
     let mut combination = checkpoint.current_combination.clone();
-    let mut indices = vec![0; 12];
+    let mut indices = vec![0; config.positions.len()];
     
     // Calculate starting position
-    for i in 0..12 {
-        indices[i] = combination[i] as usize;
+    for i in 0..config.positions.len() {
+        indices[i] = (combination[i] as usize) % config.positions[i].len();
     }
     
     loop {
@@ -139,7 +132,10 @@ fn generate_seeds(
         let words: Vec<String> = config.positions
             .iter()
             .enumerate()
-            .map(|(i, pos)| pos[indices[i]].clone())
+            .map(|(i, pos)| {
+                let idx = indices[i] % pos.len(); // Ensure index is within bounds
+                pos[idx].clone()
+            })
             .collect();
         
         // Validate BIP39 checksum
