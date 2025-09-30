@@ -1,3 +1,41 @@
+# Rust build artifacts
 /target
+
+# Generated files
 /seeds
 /seeds/*
+FOUND.txt
+checkpoint.json
+*.log
+
+# OS generated files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# IDE files
+.idea/
+.vscode/
+.cursor/
+*.swp
+*.swo
+*~
+
+# Editor config files
+.cursorrules
+.cursorignore
+.vscode/settings.json
+
+# Temporary files
+*.tmp
+*.temp
+*.bak
+*.backup
+
+# Rust specific
+**/*.rs.bk
+*.pdb
