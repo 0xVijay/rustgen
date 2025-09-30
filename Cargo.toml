@@ -34,8 +34,15 @@ memmap2 = "0.9"
 ocl = "0.19"  # OpenCL for GPU
 indicatif = "0.17"  # Progress bars
 hex = "0.4"
+num_cpus = "1.16"
+
+[profile.dev]
+opt-level = 1  # Enable some optimizations even in debug mode
 
 [profile.release]
 opt-level = 3
 lto = true
 codegen-units = 1
+panic = "abort"
+strip = true
+target-cpu = "native"

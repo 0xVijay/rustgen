@@ -67,6 +67,10 @@ Create a finder configuration:
 
 Run the finder:
 ```bash
+# Recommended: Release mode (fastest, may complete before progress shows)
+cargo run --release --bin finder_cpu finder_config.json
+
+# Development mode (shows progress, slower)
 cargo run --bin finder_cpu finder_config.json
 ```
 
@@ -85,10 +89,11 @@ cargo run --bin finder_cpu finder_config.json
 
 ## Performance
 
-- **CPU**: 10,000+ seeds/sec on modern hardware
-- **GPU**: 100,000+ seeds/sec with OpenCL support
+- **Debug Mode**: 2,000+ seeds/sec (shows progress)
+- **Release Mode**: 3,000+ seeds/sec (recommended)
 - **Memory**: Efficient streaming with memory mapping
 - **Storage**: 17 bytes per seed (132 bits + padding)
+- **Multi-threading**: Utilizes all CPU cores automatically
 
 ## Output
 
@@ -105,7 +110,10 @@ curl -o data/bip39-english.txt https://raw.githubusercontent.com/bitcoin/bips/ma
 # Generate seeds
 cargo run --bin generator config.json
 
-# Find seeds
+# Find seeds (recommended - 3x faster)
+cargo run --release --bin finder_cpu finder_config.json
+
+# Find seeds (development - shows progress)
 cargo run --bin finder_cpu finder_config.json
 ```
 
