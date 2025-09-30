@@ -182,14 +182,18 @@ fn scan_seeds(
 ) -> Result<Option<String>> {
     let target_address = config.target_address.to_lowercase();
     
-    // Set maximum parallelism with adaptive settings based on hardware
+    // Get system memory and configure for maximum usage
+    let available_memory = get_available_memory();
+    let target_memory_usage = (available_memory as f64 * 0.8) as usize; // Use 80% of available memory
     let cpu_count = num_cpus::get();
+    
+    // Configure thread pool for maximum performance
     let stack_size = if cpu_count >= 16 {
-        16 * 1024 * 1024 // 16MB for high-end systems
+        32 * 1024 * 1024 // 32MB for high-end systems
     } else if cpu_count >= 8 {
-        8 * 1024 * 1024  // 8MB for mid-range systems
+        16 * 1024 * 1024  // 16MB for mid-range systems
     } else {
-        4 * 1024 * 1024  // 4MB for low-end systems
+        8 * 1024 * 1024   // 8MB for low-end systems
     };
     
     rayon::ThreadPoolBuilder::new()
@@ -198,62 +202,77 @@ fn scan_seeds(
         .build_global()
         .unwrap();
     
+    println!("Available memory: {:.2} GB", available_memory as f64 / (1024.0 * 1024.0 * 1024.0));
+    println!("Target memory usage: {:.2} GB", target_memory_usage as f64 / (1024.0 * 1024.0 * 1024.0));
+    println!("Using {} CPU cores", cpu_count);
+    
     for file in seed_files {
         println!("Scanning file: {}", file);
         
         let file = fs::File::open(file)?;
         let mmap = unsafe { Mmap::map(&file)? };
-        
-        // Process ALL seeds at once for maximum speed with progress tracking
         let total_seeds = mmap.len() / 17;
         
-        // Adaptive memory management based on system capabilities
-        let _available_memory = get_available_memory();
+        // Calculate optimal chunk size based on available memory
+        let chunk_size = std::cmp::min(
+            target_memory_usage / (17 * cpu_count), // Divide memory among threads
+            total_seeds as usize / cpu_count // At least one chunk per thread
+        );
+        let chunk_size = std::cmp::max(chunk_size, 1000); // Minimum chunk size
+        
+        println!("Processing {} seeds in chunks of {} ({} chunks)", 
+                total_seeds, chunk_size, (total_seeds as usize + chunk_size - 1) / chunk_size);
         
         // Use atomic counter for thread-safe progress tracking
         use std::sync::atomic::{AtomicUsize, Ordering};
         let processed_atomic = std::sync::Arc::new(AtomicUsize::new(0));
         let processed_atomic_clone = processed_atomic.clone();
         
-        // Process all seeds in parallel with progress tracking
+        // Process file in memory-optimized chunks
         let result: Option<String> = mmap
-            .chunks(17)
+            .chunks(chunk_size * 17)
             .par_bridge()
-            .find_map_any(|seed_bytes| {
-                if seed_bytes.len() == 17 {
-                    // Update progress with adaptive frequency based on hardware
-                    let current = processed_atomic_clone.fetch_add(1, Ordering::Relaxed);
-                    let update_frequency = if cpu_count >= 16 {
-                        10000 // Update every 10k seeds for high-end systems
-                    } else if cpu_count >= 8 {
-                        5000  // Update every 5k seeds for mid-range systems
-                    } else {
-                        1000  // Update every 1k seeds for low-end systems
-                    };
-                    
-                    if current % update_frequency == 0 {
-                        pb.set_position(current as u64);
-                        let elapsed = pb.elapsed().as_secs_f64();
-                        if elapsed > 0.0 {
-                            let seeds_per_sec = (current as f64) / elapsed;
-                            pb.set_message(format!("{:.0} seeds/sec", seeds_per_sec));
-                        }
-                        pb.tick();
-                    }
-                    
-                    match derive_ethereum_address_optimized_bip32(seed_bytes) {
-                        Ok(address) => {
-                            if address.to_lowercase() == target_address {
-                                Some(decode_to_mnemonic(seed_bytes, wordlist))
+            .find_map_any(|chunk| {
+                // Process each chunk with maximum parallelism
+                chunk
+                    .chunks(17)
+                    .par_bridge()
+                    .find_map_any(|seed_bytes| {
+                        if seed_bytes.len() == 17 {
+                            // Update progress with adaptive frequency
+                            let current = processed_atomic_clone.fetch_add(1, Ordering::Relaxed);
+                            let update_frequency = if cpu_count >= 16 {
+                                5000 // Update every 5k seeds for high-end systems
+                            } else if cpu_count >= 8 {
+                                2000  // Update every 2k seeds for mid-range systems
                             } else {
-                                None
+                                1000  // Update every 1k seeds for low-end systems
+                            };
+                            
+                            if current % update_frequency == 0 {
+                                pb.set_position(current as u64);
+                                let elapsed = pb.elapsed().as_secs_f64();
+                                if elapsed > 0.0 {
+                                    let seeds_per_sec = (current as f64) / elapsed;
+                                    pb.set_message(format!("{:.0} seeds/sec", seeds_per_sec));
+                                }
+                                pb.tick();
                             }
+                            
+                            match derive_ethereum_address_optimized_bip32(seed_bytes) {
+                                Ok(address) => {
+                                    if address.to_lowercase() == target_address {
+                                        Some(decode_to_mnemonic(seed_bytes, wordlist))
+                                    } else {
+                                        None
+                                    }
+                                }
+                                Err(_) => None,
+                            }
+                        } else {
+                            None
                         }
-                        Err(_) => None,
-                    }
-                } else {
-                    None
-                }
+                    })
             });
         
         // Final progress update

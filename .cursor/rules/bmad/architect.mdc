@@ -1,9 +1,6 @@
 ---
-description: 
-globs: []
 alwaysApply: false
 ---
-
 # ARCHITECT Agent Rule
 
 This rule is triggered when the user types `@architect` and activates the Architect agent persona.

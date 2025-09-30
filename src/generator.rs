@@ -71,6 +71,64 @@ fn load_embedded_wordlist() -> Result<Vec<String>> {
     Err(anyhow::anyhow!("BIP39 wordlist not found. Please download it to data/bip39-english.txt"))
 }
 
+// Get available system memory in bytes (cross-platform)
+fn get_available_memory() -> u64 {
+    #[cfg(target_os = "linux")]
+    {
+        use std::fs;
+        if let Ok(meminfo) = fs::read_to_string("/proc/meminfo") {
+            for line in meminfo.lines() {
+                if line.starts_with("MemAvailable:") {
+                    if let Some(kb_str) = line.split_whitespace().nth(1) {
+                        if let Ok(kb) = kb_str.parse::<u64>() {
+                            return kb * 1024; // Convert KB to bytes
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    #[cfg(target_os = "macos")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("vm_stat").output() {
+            if let Ok(output_str) = String::from_utf8(output.stdout) {
+                for line in output_str.lines() {
+                    if line.starts_with("Pages free:") {
+                        if let Some(page_str) = line.split_whitespace().nth(2) {
+                            if let Ok(pages) = page_str.parse::<u64>() {
+                                return pages * 4096; // Convert pages to bytes
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    #[cfg(target_os = "windows")]
+    {
+        use std::process::Command;
+        if let Ok(output) = Command::new("wmic").args(&["OS", "get", "TotalVisibleMemorySize", "/value"]).output() {
+            if let Ok(output_str) = String::from_utf8(output.stdout) {
+                for line in output_str.lines() {
+                    if line.starts_with("TotalVisibleMemorySize=") {
+                        if let Some(mb_str) = line.split('=').nth(1) {
+                            if let Ok(mb) = mb_str.trim().parse::<u64>() {
+                                return mb * 1024 * 1024; // Convert MB to bytes
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    // Fallback: assume 8GB if detection fails
+    8 * 1024 * 1024 * 1024
+}
+
 fn validate_words(positions: &[Vec<String>], wordlist: &[String]) -> Result<()> {
     for (i, position) in positions.iter().enumerate() {
         for word in position {
@@ -111,10 +169,40 @@ fn generate_seeds(
     checkpoint: &mut Checkpoint,
     pb: &ProgressBar,
 ) -> Result<()> {
+    // Get system memory and configure for maximum usage
+    let available_memory = get_available_memory();
+    let target_memory_usage = (available_memory as f64 * 0.8) as usize; // Use 80% of available memory
+    let cpu_count = num_cpus::get();
+    
+    // Configure thread pool for maximum performance
+    let stack_size = if cpu_count >= 16 {
+        32 * 1024 * 1024 // 32MB for high-end systems
+    } else if cpu_count >= 8 {
+        16 * 1024 * 1024  // 16MB for mid-range systems
+    } else {
+        8 * 1024 * 1024   // 8MB for low-end systems
+    };
+    
+    rayon::ThreadPoolBuilder::new()
+        .num_threads(cpu_count)
+        .stack_size(stack_size)
+        .build_global()
+        .unwrap();
+    
+    println!("Available memory: {:.2} GB", available_memory as f64 / (1024.0 * 1024.0 * 1024.0));
+    println!("Target memory usage: {:.2} GB", target_memory_usage as f64 / (1024.0 * 1024.0 * 1024.0));
+    println!("Using {} CPU cores", cpu_count);
+    
     let max_file_size_bytes = config.max_file_size_gb * 1024 * 1024 * 1024;
     let seeds_per_file = max_file_size_bytes / 17; // 17 bytes per seed
     
-    let mut current_file = Vec::new();
+    // Use larger buffer for better memory utilization
+    let buffer_size = std::cmp::min(
+        target_memory_usage / 4, // Use 1/4 of target memory for buffer
+        seeds_per_file as usize * 17
+    );
+    
+    let mut current_file = Vec::with_capacity(buffer_size);
     let mut file_count = checkpoint.file_count;
     let mut total_processed = checkpoint.total_processed;
     
@@ -127,27 +215,56 @@ fn generate_seeds(
         indices[i] = (combination[i] as usize) % config.positions[i].len();
     }
     
+    // Batch processing for better memory usage
+    let batch_size = std::cmp::min(10000, seeds_per_file as usize / 10); // Process in batches
+    let mut batch_buffer = Vec::with_capacity(batch_size * 17);
+    
     loop {
-        // Generate current combination
-        let words: Vec<String> = config.positions
-            .iter()
-            .enumerate()
-            .map(|(i, pos)| {
-                let idx = indices[i] % pos.len(); // Ensure index is within bounds
-                pos[idx].clone()
-            })
-            .collect();
-        
-        // Validate BIP39 checksum
-        if is_valid_bip39(&words, wordlist) {
-            // Encode to 17-byte binary format
-            let seed_bytes = encode_seed(&words, wordlist);
-            current_file.extend_from_slice(&seed_bytes);
+        // Generate batch of combinations
+        let mut batch_count = 0;
+        while batch_count < batch_size {
+            // Generate current combination
+            let words: Vec<String> = config.positions
+                .iter()
+                .enumerate()
+                .map(|(i, pos)| {
+                    let idx = indices[i] % pos.len(); // Ensure index is within bounds
+                    pos[idx].clone()
+                })
+                .collect();
+            
+            // Validate BIP39 checksum
+            if is_valid_bip39(&words, wordlist) {
+                // Encode to 17-byte binary format
+                let seed_bytes = encode_seed(&words, wordlist);
+                batch_buffer.extend_from_slice(&seed_bytes);
+                batch_count += 1;
+            }
+            
+            total_processed += 1;
+            
+            // Move to next combination
+            if !increment_combination(&mut indices, &config.positions) {
+                break;
+            }
+            
+            // Update combination for checkpoint
+            for i in 0..12 {
+                combination[i] = indices[i] as u16;
+            }
         }
         
-        total_processed += 1;
+        // Add batch to current file
+        current_file.extend_from_slice(&batch_buffer);
+        batch_buffer.clear();
+        
+        // Update progress
         pb.set_position(total_processed);
-        pb.set_message(format!("{} seeds/sec", total_processed / (pb.elapsed().as_secs() + 1)));
+        let elapsed = pb.elapsed().as_secs();
+        if elapsed > 0 {
+            let seeds_per_sec = total_processed / elapsed;
+            pb.set_message(format!("{} seeds/sec", seeds_per_sec));
+        }
         
         // Save checkpoint periodically
         if total_processed % config.checkpoint_interval == 0 {
@@ -161,18 +278,14 @@ fn generate_seeds(
         if current_file.len() >= seeds_per_file as usize * 17 {
             let filename = format!("{}/batch_{}.bin", config.output_dir, file_count);
             fs::write(&filename, &current_file)?;
+            println!("Written batch_{}.bin ({} bytes)", file_count, current_file.len());
             current_file.clear();
             file_count += 1;
         }
         
-        // Move to next combination
-        if !increment_combination(&mut indices, &config.positions) {
+        // Check if we've processed all combinations
+        if batch_count < batch_size {
             break;
-        }
-        
-        // Update combination for checkpoint
-        for i in 0..12 {
-            combination[i] = indices[i] as u16;
         }
     }
     
@@ -180,6 +293,7 @@ fn generate_seeds(
     if !current_file.is_empty() {
         let filename = format!("{}/batch_{}.bin", config.output_dir, file_count);
         fs::write(&filename, &current_file)?;
+        println!("Written final batch_{}.bin ({} bytes)", file_count, current_file.len());
     }
     
     Ok(())
